@@ -12,7 +12,7 @@ Run:
 ```bash
 aws cloudformation create-stack \
 	--stack-name self-hosted-blog \
-	--template-body file://<(curl -s https://raw.githubusercontent.com/jsanders67/host-your-own-blog/frameworks/hugo/aws/templates/singleserver.yml) \
+	--template-body file://<(curl -s https://raw.githubusercontent.com/jsanders67/host-your-own-blog/master/frameworks/hugo/aws/templates/singleserver.yml) \
 	--parameters \
 		ParameterKey=KeyName,ParameterValue=<YOUR KEYHERE> \
 		ParameterKey=RepositoryUrl,ParameterValue=<YOU BLOG GIT URL HER>.git && \
