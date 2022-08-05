@@ -14,8 +14,8 @@ aws cloudformation create-stack \
 	--stack-name self-hosted-blog \
 	--template-body file://<(curl -s https://raw.githubusercontent.com/jsanders67/host-your-own-blog/master/frameworks/hugo/aws/templates/singleserver.yml) \
 	--parameters \
-		ParameterKey=KeyName,ParameterValue=<YOUR KEYHERE> \
-		ParameterKey=RepositoryUrl,ParameterValue=<YOU BLOG GIT URL HER>.git && \
+		ParameterKey=KeyName,ParameterValue=<YOUR KEY HERE> \
+		ParameterKey=RepositoryUrl,ParameterValue=<YOU BLOG GIT URL HERE>.git && \
 aws cloudformation wait  stack-create-complete \
 	--stack-name self-hosted-blog && \
 aws cloudformation describe-stacks \
