@@ -1,0 +1,219 @@
+---
+
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'A simple template that creates the bare minimum infrastructure needed to host your own blog'
+
+Parameters:
+  RepositoryUrl:
+    Description: The git url of your repository you wish to deploy
+    Type: String
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t3.nano
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Default: ""
+    Type: String
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+  ImageId:
+    Description: Id of an EC2 Image to use to create the instance
+    Type: AWS::EC2::Image::Id
+    Default: "ami-082b5a644766e0e6f"
+
+Conditions:
+  KeySpecified:
+    Fn::Not:
+      - Fn::Equals:
+        - Ref: KeyName
+        - ""
+
+Resources:
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      UserData:
+        Fn::Base64: 
+          Fn::Sub: |
+            Content-Type: multipart/mixed; boundary="===============1811840504343319497=="
+            MIME-Version: 1.0
+
+            --===============1811840504343319497==
+            Content-Type: text/text/cloud-config; charset="us-ascii"
+            MIME-Version: 1.0
+            Content-Transfer-Encoding: 7bit
+            Content-Disposition: attachment; filename="frameworks/hugo/aws/scripts/00_cloud-config.yml"
+
+            #cloud-config
+            # vim: syntax=yaml
+            packages:
+              - git
+            repo_upgrade: all
+            package_upgrade: true
+            write_files:
+            -   content: |
+                    #!/usr/bin/env bash
+                    set -e
+
+                    HTTPD_DIR=/var/www/html
+
+                    # assumes one blog
+                    blog=$(find /var/hugo-blog/blog -maxdepth 1 -mindepth 1 -type d)
+
+                    if [[ -z $blog ]]; then
+                      echo "No blog found. Exiting..." >&2
+                      exit 1
+                    fi
+
+                    if [[ -z $(type -p hugo) ]]; then
+                      echo "hugo command not found." >&2
+                      exit 1
+                    fi
+
+                    echo "Found blog: $blog. Checking for updates" >&2
+                    cd $blog
+                    git fetch
+
+                    if [[ -f $blog/current_build.txt ]] && [[ $(cat $blog/current_build.txt) == $(git rev-parse @{u}) ]]; then
+                      echo "No changes detected for blog '$blog'. Exiting..." >&2
+                      exit 0
+                    fi
+
+                    echo "Changes detected in blog '$blog'. Updating..." >&2
+                    git reset --hard @{u}
+                    hugo >&2
+                    cp -R public/* $HTTPD_DIR
+                    git rev-parse HEAD > $blog/current_build.txt # basically marking the transaction as complete
+                    echo "Successfully updated '$blog'. Exiting..." >&2
+                path: /var/hugo-blog/update.sh
+
+            --===============1811840504343319497==
+            Content-Type: text/text/x-shellscript; charset="us-ascii"
+            MIME-Version: 1.0
+            Content-Transfer-Encoding: 7bit
+            Content-Disposition: attachment; filename="frameworks/hugo/aws/scripts/01_bootstrap.sh"
+
+            #!/usr/bin/env bash
+            set -x -e
+
+            # TODO: verify checksum
+            curl -L https://github.com/gohugoio/hugo/releases/download/v0.55.6/hugo_0.55.6_Linux-64bit.tar.gz -o /tmp/hugo_0.55.6_Linux-64bit.tar.gz
+            mkdir -p /tmp/hugo-install
+            tar -xzf /tmp/hugo_0.55.6_Linux-64bit.tar.gz -C /tmp/hugo-install
+            mv /tmp/hugo-install/hugo /usr/bin
+
+            # Create the source dir
+            mkdir -p /var/hugo-blog/blog
+            cd /var/hugo-blog/blog
+            git clone --verbose --recurse-submodules https://gitlab.com/jsanders67/sanjams-hugo-blog.git
+
+            # Build site
+            cd sanjams-hugo-blog
+            hugo >&2
+
+            # configure nginx via the default config
+            # with a modified root directory
+            amazon-linux-extras install -y nginx1.12
+            mkdir -p /var/www/html
+            cat << 'EOF' > /etc/nginx/nginx.conf
+            user nginx;
+            worker_processes auto;
+            error_log /var/log/nginx/error.log;
+            pid /run/nginx.pid;
+
+            include /usr/share/nginx/modules/*.conf;
+
+            events {
+                worker_connections 1024;
+            }
+
+            http {
+                log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                                  '$status $body_bytes_sent "$http_referer" '
+                                  '"$http_user_agent" "$http_x_forwarded_for"';
+
+                access_log  /var/log/nginx/access.log  main;
+
+                sendfile            on;
+                tcp_nopush          on;
+                tcp_nodelay         on;
+                keepalive_timeout   65;
+                types_hash_max_size 2048;
+
+                include             /etc/nginx/mime.types;
+                default_type        application/octet-stream;
+
+                include /etc/nginx/conf.d/*.conf;
+
+                server {
+                    listen       80 default_server;
+                    listen       [::]:80 default_server;
+                    server_name  _;
+                    root         /var/www/html;
+
+                    include /etc/nginx/default.d/*.conf;
+
+                    location / {
+                    }
+
+                    error_page 404 /404.html;
+                        location = /40x.html {
+                    }
+
+                    error_page 500 502 503 504 /50x.html;
+                        location = /50x.html {
+                    }
+                }
+            }
+            EOF
+            service nginx start
+
+            # Copy binaries
+            cp -R public/* /var/www/html
+
+            # Configure cronjob
+            cat << 'EOF' | crontab -
+            * * * * * bash /var/hugo-blog/update.sh 2>&1
+            EOF
+            --===============1811840504343319497==--
+      InstanceType:
+        Ref: InstanceType
+      SecurityGroups:
+          - Ref: CreatedSecurityGroup
+      KeyName:
+        Fn::If:
+          - KeySpecified
+          - Ref: KeyName
+          - Ref: AWS::NoValue
+      ImageId:
+        Ref: ImageId
+  CreatedSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "A group created for your self-hosted blog"
+      SecurityGroupIngress:
+        - 
+          CidrIp: 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+
+  IPAddress:
+    Type: AWS::EC2::EIP
+  IPAssoc:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId:
+        Ref: EC2Instance
+      EIP:
+        Ref: IPAddress
+Outputs:
+  InstanceId:
+    Description: InstanceId of the newly created EC2 instance
+    Value:
+      Ref: EC2Instance
+  InstanceIPAddress:
+    Description: IP address of the newly created EC2 instance
+    Value:
+      Ref: IPAddress

@@ -1,0 +1,42 @@
+#cloud-config
+# vim: syntax=yaml
+packages:
+  - git
+repo_upgrade: all
+package_upgrade: true
+write_files:
+-   content: |
+        #!/usr/bin/env bash
+        set -e
+
+        HTTPD_DIR=/var/www/html
+
+        # assumes one blog
+        blog=$(find /var/hugo-blog/blog -maxdepth 1 -mindepth 1 -type d)
+
+        if [[ -z $blog ]]; then
+          echo "No blog found. Exiting..." >&2
+          exit 1
+        fi
+
+        if [[ -z $(type -p hugo) ]]; then
+          echo "hugo command not found." >&2
+          exit 1
+        fi
+
+        echo "Found blog: $blog. Checking for updates" >&2
+        cd $blog
+        git fetch
+
+        if [[ -f $blog/current_build.txt ]] && [[ $(cat $blog/current_build.txt) == $(git rev-parse @{u}) ]]; then
+          echo "No changes detected for blog '$blog'. Exiting..." >&2
+          exit 0
+        fi
+
+        echo "Changes detected in blog '$blog'. Updating..." >&2
+        git reset --hard @{u}
+        hugo >&2
+        cp -R public/* $HTTPD_DIR
+        git rev-parse HEAD > $blog/current_build.txt # basically marking the transaction as complete
+        echo "Successfully updated '$blog'. Exiting..." >&2
+    path: /var/hugo-blog/update.sh
